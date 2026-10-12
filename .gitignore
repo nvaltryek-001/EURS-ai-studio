@@ -30,3 +30,5 @@ frontend/.env.local
 *.hdf5
 *.keras
 *.safetensors
+!*.env.example
+data/dataset/
