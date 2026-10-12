@@ -1,0 +1,11 @@
+﻿services:
+  - type: web
+    name: eurs-ai-studio-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    plan: free
+    envVars:
+      - key: CORS_ORIGINS
+        value: http://localhost:5173
