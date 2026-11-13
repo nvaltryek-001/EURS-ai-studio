@@ -11,6 +11,31 @@ EURS AI Studio is a web-based computer vision project designed to improve the vi
 
 ---
 
+## 🎬 Demo
+
+<p align="center">
+  <a href="docs/demo/EURS-ai-studio-demo.mp4"><img src="docs/demo/EURS-ai-studio-demo.gif" width="800" alt="EURS AI Studio walkthrough: landing page, Image Lab upload panel, five-class taxonomy and research roadmap" /></a>
+  <br/><sub>Real recording of the frontend + FastAPI backend running locally. <a href="docs/demo/EURS-ai-studio-demo.mp4">Watch the MP4</a>.</sub>
+</p>
+
+> This recording shows the interface only: no underwater image was processed, because no EURS/underwater
+> image was available on the recording machine. The local backend reported
+> `restoration: classical_cv_baseline`, `segmentation: heuristic_demo_only`, `trained_model_loaded: false`.
+
+## 📸 Screenshots
+
+| Landing | Image Lab |
+|---|---|
+| ![Landing page](docs/screenshots/desktop-hero.png) | ![Image Lab upload and output panels](docs/screenshots/desktop-image-lab.png) |
+
+| Mobile — landing | Mobile — Image Lab |
+|---|---|
+| <img src="docs/screenshots/mobile-hero.png" width="260" alt="Mobile landing" /> | <img src="docs/screenshots/mobile-image-lab.png" width="260" alt="Mobile Image Lab" /> |
+
+More: [taxonomy section](docs/screenshots/desktop-section-2.png) · [roadmap section](docs/screenshots/desktop-section-3.png)
+
+---
+
 ## ✨ Features
 
 - 📤 Upload underwater images through a web interface.
