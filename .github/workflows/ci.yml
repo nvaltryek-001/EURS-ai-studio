@@ -1,0 +1,44 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -r ml/requirements.txt
+      - name: Unit tests
+        run: python -m pytest -q
+      - name: End-to-end smoke test on synthetic data (small)
+        run: |
+          python ml/prepare_dataset.py --synthetic 48 --root /tmp/syn --out /tmp/splits
+          python ml/train_lite.py --manifest /tmp/splits/manifest.csv --out /tmp/run --max-iter 5
+          python ml/evaluate.py --manifest /tmp/splits/manifest.csv --model /tmp/run/eurs_lite.npz --out /tmp/res --bootstrap 50
+
+  torch-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -r ml/requirements.txt torch torchvision onnx --extra-index-url https://download.pytorch.org/whl/cpu
+      - name: EURS-Net forward pass, 1-epoch train and ONNX export on synthetic data
+        run: |
+          python ml/prepare_dataset.py --synthetic 48 --root /tmp/syn --out /tmp/splits
+          python ml/train_net.py --manifest /tmp/splits/manifest.csv --out /tmp/net --epochs 1 --batch 2 --size 128 --val-size 128 --workers 0 --no-pretrained
+          python ml/export_onnx.py --ckpt /tmp/net/best.pt --out /tmp/net/eurs_net.onnx --size 128
+          python ml/evaluate.py --manifest /tmp/splits/manifest.csv --model /tmp/net/eurs_net.onnx --out /tmp/res_net --bootstrap 50
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - run: npm run build

@@ -32,3 +32,22 @@ frontend/.env.local
 *.safetensors
 !*.env.example
 data/dataset/
+
+# --- training / evaluation artefacts ---
+runs/
+results/*/*/qualitative/
+!results/synthetic/*/qualitative/
+backend/models/*.npz
+backend/models/*.onnx
+backend/models/*.json
+submissions/
+# LaTeX build files (main.pdf is committed)
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.synctex.gz
+.pytest_cache/
