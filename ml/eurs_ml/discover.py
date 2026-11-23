@@ -46,7 +46,26 @@ def infer_role(rel: Path) -> str | None:
     return None
 
 
+def _match_scene(stem: str, rel: Path, index: dict[str, str]) -> str | None:
+    """Find the reference for a degraded file: exact stem, longest stem prefix, or a scene folder name."""
+    if stem in index:
+        return stem
+    best = None
+    for ref in index:
+        if stem.startswith(ref) and len(stem) > len(ref) and not stem[len(ref)].isalpha():
+            if best is None or len(ref) > len(best):
+                best = ref
+    if best:
+        return best
+    for part in [x.lower() for x in rel.parts[:-1]][::-1]:
+        if part in index:
+            return part
+    return None
+
+
 def discover(root: str | Path, layout: dict | None = None) -> list[dict]:
+    """One sample per degraded image. Several degraded versions of one scene share its clean
+    reference and mask (EURS provides multiple RSUIGM degradations per scene)."""
     root = Path(root)
     layout = layout or {}
     files = [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTS]
@@ -54,7 +73,8 @@ def discover(root: str | Path, layout: dict | None = None) -> list[dict]:
         raise SystemExit(f"No images found under {root}")
 
     explicit = {r: layout.get(f"{r}_dir") for r in ("input", "clean", "mask")}
-    samples: dict[str, dict] = defaultdict(dict)
+    inputs: list[Path] = []
+    refs: dict[str, dict[str, str]] = {"clean": {}, "mask": {}}
     for p in files:
         rel = p.relative_to(root)
         role = None
@@ -67,15 +87,20 @@ def discover(root: str | Path, layout: dict | None = None) -> list[dict]:
             import cv2
             img = cv2.imread(str(p), cv2.IMREAD_UNCHANGED)
             role = "mask" if img is not None and img.ndim == 2 else "clean"
-        if role is None:
-            role = "input"  # images with no keyword are treated as inputs
-        samples[norm_stem(p)].setdefault(role, str(rel))
-    out = []
-    for sid, roles in sorted(samples.items()):
-        if "input" not in roles:
-            continue
-        out.append({"id": sid, "input": roles["input"], "clean": roles.get("clean", ""),
-                    "mask": roles.get("mask", "")})
+        if role in ("clean", "mask"):
+            refs[role].setdefault(norm_stem(p), str(rel))
+        elif role is not None or not any(explicit.values()):
+            inputs.append(rel)  # images with no keyword are treated as inputs
+
+    out, used = [], set()
+    for rel in sorted(inputs):
+        stem = norm_stem(rel)
+        c = _match_scene(stem, rel, refs["clean"])
+        m = _match_scene(stem, rel, refs["mask"])
+        sid = stem if stem not in used else f"{rel.parent.name.lower()}_{stem}"
+        used.add(sid)
+        out.append({"id": sid, "input": str(rel), "clean": refs["clean"].get(c, "") if c else "",
+                    "mask": refs["mask"].get(m, "") if m else "", "scene": c or m or ""})
     return out
 
 
@@ -91,20 +116,31 @@ def split_samples(samples: list[dict], root: Path, ratios=(0.8, 0.1, 0.1), seed:
     rng = random.Random(seed)
     # Per-sample class presence (subsampled read) for stratification and statistics.
     class_pixels = np.zeros(5, np.int64)
+    cache: dict[str, tuple[str, np.ndarray]] = {}  # one mask is shared by all degraded versions of a scene
     for s in samples:
         s["classes"] = ""
         if s["mask"]:
-            m = decoder(root / s["mask"])[::4, ::4]
-            present = [c for c in range(5) if (m == c).any()]
-            s["classes"] = "".join(map(str, present))
-            class_pixels += np.bincount(m[m < 5].ravel(), minlength=5)[:5]
+            if s["mask"] not in cache:
+                m = decoder(root / s["mask"])[::4, ::4]
+                cache[s["mask"]] = ("".join(str(c) for c in range(5) if (m == c).any()),
+                                    np.bincount(m[m < 5].ravel(), minlength=5)[:5])
+            s["classes"], hist = cache[s["mask"]]
+            class_pixels += hist
 
+    # 1) Degraded versions of one scene always share a split (EURS: several RSUIGM versions per scene).
     groups = defaultdict(list)
     for s in samples:
-        groups[group_key(s["id"])].append(s)
-    grouped = len(groups) >= min_groups and len(groups) < len(samples)
-    if not grouped:
-        groups = {s["id"]: [s] for s in samples}
+        groups[s.get("scene") or s["id"]].append(s)
+    grouped_by = "scene"
+    if len(groups) == len(samples):  # every scene is unique -> 2) group frames of one dive by id prefix
+        groups = defaultdict(list)
+        for s in samples:
+            groups[group_key(s["id"])].append(s)
+        grouped_by = "id prefix"
+        if not (min_groups <= len(groups) < len(samples)):  # 3) plain per-image split
+            groups = {s["id"]: [s] for s in samples}
+            grouped_by = "image"
+    grouped = grouped_by != "image"
 
     # Stratify on the rarest class present in the group (elasmobranch is typically rarest).
     freq = class_pixels / max(1, class_pixels.sum())
@@ -135,6 +171,7 @@ def split_samples(samples: list[dict], root: Path, ratios=(0.8, 0.1, 0.1), seed:
     counts = Counter(s["split"] for s in samples)
     report = {
         "seed": seed, "ratios": list(ratios), "group_aware": grouped, "n_groups": len(groups),
+        "grouped_by": grouped_by,
         "counts": dict(counts), "n_total": len(samples),
         "with_clean": sum(bool(s["clean"]) for s in samples),
         "with_mask": sum(bool(s["mask"]) for s in samples),
@@ -147,7 +184,7 @@ def split_samples(samples: list[dict], root: Path, ratios=(0.8, 0.1, 0.1), seed:
 def write_manifest(samples: list[dict], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["id", "split", "input", "clean", "mask", "classes"])
+        w = csv.DictWriter(f, fieldnames=["id", "split", "scene", "input", "clean", "mask", "classes"])
         w.writeheader()
         for s in samples:
             w.writerow({k: s.get(k, "") for k in w.fieldnames})

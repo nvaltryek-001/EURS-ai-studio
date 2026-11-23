@@ -7,6 +7,7 @@
 Train split -> optimisation; val split -> checkpoint selection + early stopping.
 The test split is not read here (use ml/evaluate.py on the exported ONNX).
 Ablations: --no-fusion, --w-rest 0 (seg only), --w-seg 0 (restoration only), --encoder mobilenet_v3_large.
+Embedded track (<=1.0M params, <=12 GFLOPs): --encoder tiny  (verify with ml/check_budget.py).
 """
 import argparse
 import json
@@ -31,7 +32,7 @@ from eurs_torch.model import EURSNet, count_params
 ap = argparse.ArgumentParser()
 ap.add_argument("--manifest", required=True, type=Path)
 ap.add_argument("--out", required=True, type=Path)
-ap.add_argument("--encoder", default="resnet18", choices=["resnet18", "resnet34", "mobilenet_v3_large"])
+ap.add_argument("--encoder", default="resnet18", choices=["tiny", "resnet18", "resnet34", "mobilenet_v3_large"])
 ap.add_argument("--no-pretrained", action="store_true")
 ap.add_argument("--no-fusion", action="store_true")
 ap.add_argument("--epochs", type=int, default=60)

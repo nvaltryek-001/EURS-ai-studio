@@ -99,3 +99,42 @@ def bootstrap(per_image_cms: list[np.ndarray], per_image_vals: dict[str, list[fl
         if v:
             out[k] = [float(np.percentile(v, 2.5)), float(np.percentile(v, 97.5))]
     return out
+
+
+# ---------------------------------------------------------------- EURS composite (approximation)
+def sharpness_ratio(pred: np.ndarray, gt: np.ndarray) -> float:
+    """Laplacian-variance sharpness of the restoration relative to the reference, capped at 1."""
+    def lap_var(x):
+        return float(cv2.Laplacian(cv2.cvtColor(x, cv2.COLOR_RGB2GRAY), cv2.CV_64F).var())
+    return float(min(1.0, lap_var(pred) / max(lap_var(gt), 1e-6)))
+
+
+def eurs_score_approx(seg: dict | None, psnr_mean: float | None, ssim_mean: float | None,
+                      sharp_mean: float | None, uciqe_mean: float | None) -> dict:
+    """Approximates the EURS composite published on the challenge page:
+
+        F = 0.6 * Qseg + 0.3 * (0.45 * PSNRnorm + 0.45 * SSIM + 0.10 * sharpness_ratio) + 0.1 * NRquality
+
+    Approximations (the organisers' evaluator is authoritative):
+      * Qseg = mean F1 x mIoU x coverage, with coverage = 0 if any ground-truth class has recall < 1 %, else 1.
+      * PSNRnorm = clip((PSNR - 15) / 20, 0, 1)  (the published 15-35 dB window).
+      * sharpness_ratio = Laplacian-variance ratio restored / reference, capped at 1.
+      * NRquality uses UCIQE / 0.7 (capped at 1) as a stand-in for mean(normalised UIQM, UCIQE, CCF).
+    """
+    parts = {}
+    if seg:
+        recalls = [v["recall"] for v in seg["per_class"].values() if v["support_px"] > 0]
+        coverage = 0.0 if any(r is None or r < 0.01 for r in recalls) else 1.0
+        parts["Qseg"] = float(np.nan_to_num(seg["mean_f1"]) * np.nan_to_num(seg["mIoU"]) * coverage)
+    if psnr_mean is not None:
+        parts["PSNRnorm"] = float(np.clip((psnr_mean - 15.0) / 20.0, 0, 1))
+    if ssim_mean is not None:
+        parts["SSIM"] = float(ssim_mean)
+    if sharp_mean is not None:
+        parts["sharpness_ratio"] = float(sharp_mean)
+    if uciqe_mean is not None:
+        parts["NRquality_proxy"] = float(min(1.0, uciqe_mean / 0.7))
+    if all(k in parts for k in ("Qseg", "PSNRnorm", "SSIM", "sharpness_ratio", "NRquality_proxy")):
+        rest = 0.45 * parts["PSNRnorm"] + 0.45 * parts["SSIM"] + 0.10 * parts["sharpness_ratio"]
+        parts["score"] = 0.6 * parts["Qseg"] + 0.3 * rest + 0.1 * parts["NRquality_proxy"]
+    return parts

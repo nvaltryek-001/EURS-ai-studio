@@ -2,8 +2,9 @@
 
 Contract (written by export_onnx.py into <name>.json next to <name>.onnx):
   input  "image":    float32 [1, 3, H, W], RGB in [0, 1], H and W multiples of 32
-  output "restored": float32 [1, 3, H, W] in [0, 1]
-  output "logits":   float32 [1, C, H, W]
+  output "restored_image": float32 [1, 3, H, W] in [0, 1]   (older exports: "restored")
+  output "seg_logits":     float32 [1, C, H, W] raw logits  (older exports: "logits")
+This is the EURS Track 2 (embedded) contract.
 """
 from __future__ import annotations
 
@@ -25,6 +26,12 @@ class OnnxModel:
             import onnxruntime as ort  # imported lazily so the API runs without it
             session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
         self.session = session
+        try:
+            names = {o.name for o in session.get_outputs()}
+        except AttributeError:  # test doubles
+            names = set()
+        self.out_names = (["restored", "logits"] if {"restored", "logits"} <= names
+                          else ["restored_image", "seg_logits"])
 
     def predict(self, rgb_u8: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Single forward pass -> (restored RGB uint8, class-index mask uint8)."""
@@ -32,7 +39,7 @@ class OnnxModel:
         s = self.input_size
         x = cv2.resize(rgb_u8, (s, s), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
         x = np.ascontiguousarray(x.transpose(2, 0, 1)[None])
-        restored, logits = self.session.run(["restored", "logits"], {"image": x})
+        restored, logits = self.session.run(self.out_names, {"image": x})
         restored = np.clip(restored[0].transpose(1, 2, 0), 0, 1)
         # Re-inject full-resolution detail: upsample the predicted correction, not the image.
         full = rgb_u8.astype(np.float32) / 255.0

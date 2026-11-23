@@ -1,7 +1,7 @@
 {
   "name": "eurs_lite",
   "display_name": "EURS-Lite (CPU MLP)",
-  "model_spec": "runs/synthetic_lite/eurs_lite.npz",
+  "model_spec": "../runs/synthetic_lite/eurs_lite.npz",
   "dataset": "synthetic",
   "split": "test",
   "n_images": 30,
@@ -11,7 +11,8 @@
     "input_PSNR": 9.990407088134166,
     "input_SSIM": 0.635522391666869,
     "UCIQE": 0.17980364160575088,
-    "input_UCIQE": 0.14884943108319398
+    "input_UCIQE": 0.14884943108319398,
+    "sharpness": 0.8797794840704452
   },
   "segmentation": {
     "pixel_acc": 0.9750620659722222,
@@ -95,6 +96,14 @@
       ]
     ]
   },
+  "eurs_score_approx": {
+    "Qseg": 0.6935630900876216,
+    "PSNRnorm": 0.7281122294685547,
+    "SSIM": 0.8592231516086457,
+    "sharpness_ratio": 0.8797794840704452,
+    "NRquality_proxy": 0.2568623451510727,
+    "score": 0.6825077495352158
+  },
   "ci95": {
     "mIoU": [
       0.7516006872862381,
@@ -110,8 +119,8 @@
     ]
   },
   "latency_ms": {
-    "mean": 186.48109309998895,
-    "median": 175.36322650039438,
+    "mean": 173.0186926666685,
+    "median": 167.48558850002837,
     "hardware": "x86_64 (CPU)"
   },
   "params": 23688

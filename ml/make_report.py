@@ -26,9 +26,9 @@ import eurs_ml  # noqa: E402,F401
 from eurs_core import CLASS_NAMES  # noqa: E402
 
 ROOT = eurs_ml.REPO_ROOT
-ORDER = ["input", "classical", "eurs_lite", "eurs_net"]
+ORDER = ["input", "classical", "eurs_lite", "eurs_net_tiny", "eurs_net"]
 # Categorical slots 1-3 of the validated reference palette (fixed order, follows the model).
-MODEL_COLORS = {"classical": "#2a78d6", "eurs_lite": "#eb6834", "eurs_net": "#1baf7a"}
+MODEL_COLORS = {"classical": "#2a78d6", "eurs_lite": "#eb6834", "eurs_net": "#1baf7a", "eurs_net_tiny": "#eda100"}
 TEXT, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 
 ap = argparse.ArgumentParser()
@@ -73,27 +73,28 @@ def ci(r, key, pct=False):
 
 def label(r):
     return {"classical": "Classical (GW+CLAHE / heuristic)", "eurs_lite": "EURS-Lite (ours, CPU)",
-            "eurs_net": "EURS-Net (ours)"}.get(r["name"], r.get("display_name", r["name"]).replace("_", r"\_"))
+            "eurs_net": "EURS-Net (ours, ResNet-18)", "eurs_net_tiny": "EURS-Net-Tiny (ours, embedded)"}.get(r["name"], r.get("display_name", r["name"]).replace("_", r"\_"))
 
 
 # ------------------------------------------------------------------ tables
 def table_main():
-    lines = [r"\begin{tabular}{lcccccc}", r"\toprule",
-             r"Method & PSNR$\uparrow$ & SSIM$\uparrow$ & UCIQE$\uparrow$ & mIoU (\%)$\uparrow$ & mF1 (\%)$\uparrow$ & ms/img$\downarrow$ \\",
+    lines = [r"\begin{tabular}{lccccccc}", r"\toprule",
+             r"Method & PSNR$\uparrow$ & SSIM$\uparrow$ & UCIQE$\uparrow$ & mIoU (\%)$\uparrow$ & mF1 (\%)$\uparrow$ & EURS$^{\approx}\uparrow$ & ms/img$\downarrow$ \\",
              r"\midrule"]
     if runs:
         r0 = runs[0]["restoration"]
         lines.append(f"Degraded input (identity) & {f(r0.get('input_PSNR'))} & {f(r0.get('input_SSIM'), 3)} & "
-                     f"{f(r0.get('input_UCIQE'), 3)} & -- & -- & -- \\\\")
+                     f"{f(r0.get('input_UCIQE'), 3)} & -- & -- & -- & -- \\\\")
         for r in runs:
             rs, sg = r["restoration"], r.get("segmentation") or {}
             lines.append(f"{label(r)} & {f(rs.get('PSNR'))}{ci(r, 'PSNR')} & {f(rs.get('SSIM'), 3)} & "
                          f"{f(rs.get('UCIQE'), 3)} & {f(sg.get('mIoU'), 1, True)}{ci(r, 'mIoU', True)} & "
-                         f"{f(sg.get('mean_f1'), 1, True)} & {f(r['latency_ms']['median'], 1)} \\\\")
+                         f"{f(sg.get('mean_f1'), 1, True)} & {f((r.get('eurs_score_approx') or {}).get('score'), 3)} & "
+                         f"{f(r['latency_ms']['median'], 1)} \\\\")
     else:
-        for name in ["Degraded input (identity)", "Classical (GW+CLAHE / heuristic)",
-                     "EURS-Lite (ours, CPU)", "EURS-Net (ours)"]:
-            lines.append(f"{name} & -- & -- & -- & -- & -- & -- \\\\")
+        for name in ["Degraded input (identity)", "Classical (GW+CLAHE / heuristic)", "EURS-Lite (ours, CPU)",
+                     "EURS-Net-Tiny (ours, embedded)", "EURS-Net (ours, ResNet-18)"]:
+            lines.append(f"{name} & -- & -- & -- & -- & -- & -- & -- \\\\")
     lines += [r"\bottomrule", r"\end{tabular}"]
     return "\n".join(lines)
 
@@ -283,6 +284,7 @@ web[T] = {
         "pixel_acc": (r.get("segmentation") or {}).get("pixel_acc"),
         "per_class_iou": {c: ((r.get("segmentation") or {}).get("per_class", {}).get(c) or {}).get("IoU")
                           for c in CLASS_NAMES},
+        "eurs_score": (r.get("eurs_score_approx") or {}).get("score"),
         "ci95": r.get("ci95"), "latency_ms": r["latency_ms"]["median"], "params": r.get("params"),
     } for r in runs],
 }

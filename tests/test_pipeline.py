@@ -52,6 +52,28 @@ def test_discover_and_group_split(synth):
     assert set(rep["counts"]) == {"train", "val", "test"}
 
 
+def test_many_degraded_versions_per_scene(tmp_path):
+    """EURS layout: one clean image + mask per scene, several degraded versions of it."""
+    img = (np.random.rand(20, 20, 3) * 255).astype(np.uint8)
+    for d in ("clean", "masks", "degraded"):
+        (tmp_path / d).mkdir()
+    for k in range(12):
+        scene = f"scene{k:02d}"
+        cv2.imwrite(str(tmp_path / "clean" / f"{scene}.png"), img)
+        cv2.imwrite(str(tmp_path / "masks" / f"{scene}.png"), np.full((20, 20), k % 5, np.uint8))
+        for v in range(4):
+            cv2.imwrite(str(tmp_path / "degraded" / f"{scene}_type{v}_d{v + 2}.png"), img)
+    samples = discover(tmp_path)
+    assert len(samples) == 48
+    assert all(s["clean"] == f"clean/{s['scene']}.png" and s["mask"] == f"masks/{s['scene']}.png" for s in samples)
+    out, rep = split_samples(samples, tmp_path, seed=1)
+    assert rep["grouped_by"] == "scene" and rep["n_groups"] == 12
+    by_scene = {}
+    for s in out:
+        by_scene.setdefault(s["scene"], set()).add(s["split"])
+    assert all(len(v) == 1 for v in by_scene.values())  # no scene leaks across splits
+
+
 def test_mask_decoder_palette_and_index(tmp_path):
     pal = [[0, 0, 0], [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]]
     m = np.array([[0, 1, 2], [3, 4, 0]], np.uint8)

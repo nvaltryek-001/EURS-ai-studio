@@ -24,13 +24,38 @@ def conv_bn(cin, cout, k=3):
                          nn.ReLU(inplace=True))
 
 
+class DSConv(nn.Module):
+    """Depthwise-separable conv block (MobileNet-style): dw3x3 -> BN -> ReLU -> pw1x1 -> BN -> ReLU."""
+
+    def __init__(self, cin, cout, stride=1):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(cin, cin, 3, stride, 1, groups=cin, bias=False), nn.BatchNorm2d(cin), nn.ReLU(inplace=True),
+            nn.Conv2d(cin, cout, 1, bias=False), nn.BatchNorm2d(cout), nn.ReLU(inplace=True))
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class TinyEncoder(nn.Sequential):
+    """~0.1M-parameter encoder for the embedded track (stride 2, 4, 8, 16, 32)."""
+
+    def __init__(self, ch=(16, 24, 40, 64, 96)):
+        stages = [nn.Sequential(conv_bn(3, ch[0]), DSConv(ch[0], ch[0], 2))]
+        for a, b in zip(ch[:-1], ch[1:]):
+            stages.append(nn.Sequential(DSConv(a, b, 2), DSConv(b, b)))
+        super().__init__(*stages)
+
+
 class Encoder(nn.Module):
     """Returns 5 feature maps at strides 2, 4, 8, 16, 32."""
 
     def __init__(self, name: str = "resnet18", pretrained: bool = True):
         super().__init__()
         self.name = name
-        if name.startswith("resnet"):
+        if name == "tiny":
+            self.stages = nn.ModuleList(list(TinyEncoder()))  # trained from scratch
+        elif name.startswith("resnet"):
             w = "DEFAULT" if pretrained else None
             net = getattr(torchvision.models, name)(weights=w)
             self.stages = nn.ModuleList([
@@ -63,9 +88,11 @@ class Encoder(nn.Module):
 
 
 class UpBlock(nn.Module):
-    def __init__(self, cin, cskip, cout, cextra=0):
+    def __init__(self, cin, cskip, cout, cextra=0, light=False):
         super().__init__()
-        self.conv = nn.Sequential(conv_bn(cin + cskip + cextra, cout), conv_bn(cout, cout))
+        c = cin + cskip + cextra
+        self.conv = (nn.Sequential(DSConv(c, cout), DSConv(cout, cout)) if light
+                     else nn.Sequential(conv_bn(c, cout), conv_bn(cout, cout)))
 
     def forward(self, x, skip, extra=None):
         x = F.interpolate(x, size=skip.shape[-2:], mode="bilinear", align_corners=False)
@@ -74,16 +101,16 @@ class UpBlock(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, enc_ch, widths=(256, 128, 64, 32), fuse_ch=None):
+    def __init__(self, enc_ch, widths=(256, 128, 64, 32), fuse_ch=None, light=False):
         super().__init__()
         fuse_ch = fuse_ch or [0] * len(widths)
         c5, c4, c3, c2, c1 = enc_ch[::-1]
-        self.center = conv_bn(c5, widths[0])
+        self.center = conv_bn(c5, widths[0], k=1 if light else 3)
         self.blocks = nn.ModuleList([
-            UpBlock(widths[0], c4, widths[0], fuse_ch[0]),
-            UpBlock(widths[0], c3, widths[1], fuse_ch[1]),
-            UpBlock(widths[1], c2, widths[2], fuse_ch[2]),
-            UpBlock(widths[2], c1, widths[3], fuse_ch[3]),
+            UpBlock(widths[0], c4, widths[0], fuse_ch[0], light),
+            UpBlock(widths[0], c3, widths[1], fuse_ch[1], light),
+            UpBlock(widths[1], c2, widths[2], fuse_ch[2], light),
+            UpBlock(widths[2], c1, widths[3], fuse_ch[3], light),
         ])
         self.out_ch = list(widths)
 
@@ -99,14 +126,17 @@ class Decoder(nn.Module):
 
 class EURSNet(nn.Module):
     def __init__(self, num_classes: int = 5, encoder: str = "resnet18", pretrained: bool = True,
-                 fusion: bool = True, widths=(256, 128, 64, 32)):
+                 fusion: bool = True, widths=None):
         super().__init__()
+        light = encoder == "tiny"
+        widths = widths or ((64, 48, 32, 16) if light else (256, 128, 64, 32))
+        head = 16 if light else 32
         self.encoder = Encoder(encoder, pretrained)
         self.fusion = fusion
-        self.res_dec = Decoder(self.encoder.channels, widths)
-        self.seg_dec = Decoder(self.encoder.channels, widths, fuse_ch=list(widths) if fusion else None)
-        self.res_head = nn.Sequential(conv_bn(widths[-1] + 3, 32), nn.Conv2d(32, 3, 3, padding=1))
-        self.seg_head = nn.Sequential(conv_bn(widths[-1], 32), nn.Conv2d(32, num_classes, 1))
+        self.res_dec = Decoder(self.encoder.channels, widths, light=light)
+        self.seg_dec = Decoder(self.encoder.channels, widths, fuse_ch=list(widths) if fusion else None, light=light)
+        self.res_head = nn.Sequential(conv_bn(widths[-1] + 3, head), nn.Conv2d(head, 3, 3, padding=1))
+        self.seg_head = nn.Sequential(conv_bn(widths[-1], head), nn.Conv2d(head, num_classes, 1))
 
     def forward(self, x):
         feats = self.encoder(x)

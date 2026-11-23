@@ -26,6 +26,19 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install -r ml/requirements.txt torch torchvision onnx --extra-index-url https://download.pytorch.org/whl/cpu
+      - name: Parameter / FLOP budget (EURS Track 2 = <=1.0M params, <=12 GFLOPs)
+        run: |
+          python ml/check_budget.py --encoder tiny --size 512
+          python ml/check_budget.py --encoder tiny --size 512 --no-fusion
+          python ml/check_budget.py --encoder resnet18 --size 512 --no-fail
+          python ml/check_budget.py --encoder mobilenet_v3_large --size 512 --no-fail
+      - name: EURS-Net-Tiny 1-epoch train, ONNX export (Track 2 tensor names) and evaluation
+        run: |
+          python ml/prepare_dataset.py --synthetic 48 --root /tmp/syn_t --out /tmp/splits_t
+          python ml/train_net.py --manifest /tmp/splits_t/manifest.csv --out /tmp/tiny --encoder tiny --epochs 1 --batch 2 --size 128 --val-size 128 --workers 0
+          python ml/export_onnx.py --ckpt /tmp/tiny/best.pt --out /tmp/tiny/eurs_net_tiny.onnx --size 128 --name eurs_net_tiny
+          python -c "import onnxruntime as o; s=o.InferenceSession('/tmp/tiny/eurs_net_tiny.onnx'); print([(x.name, x.shape) for x in s.get_outputs()])"
+          python ml/evaluate.py --manifest /tmp/splits_t/manifest.csv --model /tmp/tiny/eurs_net_tiny.onnx --out /tmp/res_tiny --bootstrap 50
       - name: EURS-Net forward pass, 1-epoch train and ONNX export on synthetic data
         run: |
           python ml/prepare_dataset.py --synthetic 48 --root /tmp/syn --out /tmp/splits

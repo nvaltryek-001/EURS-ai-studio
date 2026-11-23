@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { CLASSES } from "../api";
 
 // Categorical slots 1-3 of the validated reference palette (dark-surface steps); colour follows the model.
-const MODEL_COLOR = { classical: "#3987e5", eurs_lite: "#d95926", eurs_net: "#199e70" };
+const MODEL_COLOR = { classical: "#3987e5", eurs_lite: "#d95926", eurs_net: "#199e70", eurs_net_tiny: "#c98500" };
 const short = (s) => s.split(" (")[0];
 const fmt = (v, d = 2, pct = false) => (v == null || Number.isNaN(v) ? "–" : pct ? (100 * v).toFixed(1) : v.toFixed(d));
 

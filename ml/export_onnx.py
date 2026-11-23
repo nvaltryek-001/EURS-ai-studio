@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Export a trained EURS-Net checkpoint to ONNX (+ metadata JSON read by the API).
 
+Matches the EURS Track 2 contract: input "image" (1,3,H,W) RGB float32 in [0,1], static shape;
+outputs "restored_image" (1,3,H,W) in [0,1] and "seg_logits" (1,5,H,W) raw logits; weights embedded.
+
   python ml/export_onnx.py --ckpt runs/eurs_net/best.pt --out runs/eurs_net/eurs_net.onnx [--install]
 """
 import argparse
@@ -31,7 +34,7 @@ model.load_state_dict(ck["model"])
 model.eval()
 x = torch.rand(1, 3, args.size, args.size)
 args.out.parent.mkdir(parents=True, exist_ok=True)
-torch.onnx.export(model, x, str(args.out), input_names=["image"], output_names=["restored", "logits"],
+torch.onnx.export(model, x, str(args.out), input_names=["image"], output_names=["restored_image", "seg_logits"],
                   opset_version=args.opset, do_constant_folding=True, dynamo=False)
 
 # Numerical check against PyTorch.

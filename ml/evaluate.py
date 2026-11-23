@@ -19,7 +19,7 @@ from eurs_core import NUM_CLASSES, colorize, overlay
 from eurs_ml.discover import manifest_root, read_manifest
 from eurs_ml.io import MaskDecoder, read_rgb, write_rgb
 from eurs_ml.models import load_model
-from eurs_ml.metrics import bootstrap, confusion, psnr, seg_scores, ssim, uciqe
+from eurs_ml.metrics import bootstrap, confusion, eurs_score_approx, psnr, seg_scores, sharpness_ratio, ssim, uciqe
 
 
 ap = argparse.ArgumentParser()
@@ -47,7 +47,7 @@ if args.limit:
     rows = rows[: args.limit]
 
 per_img, cms, times = [], [], []
-vals = {"PSNR": [], "SSIM": [], "input_PSNR": [], "input_SSIM": [], "UCIQE": [], "input_UCIQE": []}
+vals = {"PSNR": [], "SSIM": [], "input_PSNR": [], "input_SSIM": [], "UCIQE": [], "input_UCIQE": [], "sharpness": []}
 cm_total = np.zeros((NUM_CLASSES, NUM_CLASSES), np.int64)
 for i, s in enumerate(rows):
     x = read_rgb(root / s["input"])
@@ -59,8 +59,9 @@ for i, s in enumerate(rows):
     vals["input_UCIQE"].append(uciqe(x))
     if s["clean"]:
         y = read_rgb(root / s["clean"])
-        r.update(PSNR=psnr(restored, y), SSIM=ssim(restored, y), input_PSNR=psnr(x, y), input_SSIM=ssim(x, y))
-        for k in ("PSNR", "SSIM", "input_PSNR", "input_SSIM"):
+        r.update(PSNR=psnr(restored, y), SSIM=ssim(restored, y), input_PSNR=psnr(x, y), input_SSIM=ssim(x, y),
+                 sharpness=sharpness_ratio(restored, y))
+        for k in ("PSNR", "SSIM", "input_PSNR", "input_SSIM", "sharpness"):
             vals[k].append(r[k])
     if s["mask"]:
         gt = decode(root / s["mask"])
@@ -90,6 +91,8 @@ result = {
     "n_images": len(rows),
     "restoration": mean,
     "segmentation": dict(seg_scores(cm_total), confusion_matrix=cm_total.tolist()) if cms else None,
+    "eurs_score_approx": eurs_score_approx(seg_scores(cm_total) if cms else None, mean["PSNR"], mean["SSIM"],
+                                           mean["sharpness"], mean["UCIQE"]),
     "ci95": bootstrap(cms, {k: vals[k] for k in ("PSNR", "SSIM")}, n_boot=args.bootstrap),
     "latency_ms": {"mean": float(np.mean(times)), "median": float(np.median(times)),
                    "hardware": f"{platform.processor() or platform.machine()} (CPU)"},
@@ -104,6 +107,6 @@ with open(out / "per_image.csv", "w", newline="") as f:
 
 seg = result["segmentation"] or {}
 print(f"[{name}] {args.split} n={len(rows)}  PSNR={mean['PSNR']}  SSIM={mean['SSIM']}  "
-      f"mIoU={seg.get('mIoU')}  latency={result['latency_ms']['median']:.1f}ms  -> {out}")
+      f"mIoU={seg.get('mIoU')}  EURS~{result['eurs_score_approx'].get('score')}  latency={result['latency_ms']['median']:.1f}ms  -> {out}")
 if result["dataset"] == "synthetic":
     print("NOTE: synthetic smoke-test data -- these are NOT benchmark results.")

@@ -15,10 +15,15 @@ python ml/evaluate.py --manifest "$SPLIT/manifest.csv" --model "runs/${NAME}_lit
 LOGS=(--train-log "runs/${NAME}_lite/train_log.json")
 
 if python -c "import torch" 2>/dev/null; then
+  # Embedded-track model (<=1.0M params, <=12 GFLOPs at 512x512) and the larger reference model.
+  python ml/check_budget.py --encoder tiny --size 512
+  python ml/train_net.py --manifest "$SPLIT/manifest.csv" --out "runs/${NAME}_net_tiny" --encoder tiny ${TINY_ARGS:-}
+  python ml/export_onnx.py --ckpt "runs/${NAME}_net_tiny/best.pt" --out "runs/${NAME}_net_tiny/eurs_net_tiny.onnx" --name eurs_net_tiny
+  python ml/evaluate.py --manifest "$SPLIT/manifest.csv" --model "runs/${NAME}_net_tiny/eurs_net_tiny.onnx" --out "$RES/eurs_net_tiny"
   python ml/train_net.py --manifest "$SPLIT/manifest.csv" --out "runs/${NAME}_net" ${NET_ARGS:-}
   python ml/export_onnx.py --ckpt "runs/${NAME}_net/best.pt" --out "runs/${NAME}_net/eurs_net.onnx"
   python ml/evaluate.py --manifest "$SPLIT/manifest.csv" --model "runs/${NAME}_net/eurs_net.onnx" --out "$RES/eurs_net"
-  LOGS+=(--train-log "runs/${NAME}_net/train_log.json")
+  LOGS+=(--train-log "runs/${NAME}_net_tiny/train_log.json" --train-log "runs/${NAME}_net/train_log.json")
 else
   echo "PyTorch not installed: skipping EURS-Net (pip install -r ml/requirements-torch.txt)"
 fi
