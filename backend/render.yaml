@@ -8,4 +8,4 @@
     plan: free
     envVars:
       - key: CORS_ORIGINS
-        value: http://localhost:5173
+        value: http://localhost:5173,https://eurs-ai-studio.vercel.app

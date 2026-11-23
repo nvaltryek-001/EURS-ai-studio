@@ -1,0 +1,8 @@
+{
+  "_comment": "Optional. Paths are relative to --root. Remove keys you do not need; auto-detection is used otherwise.",
+  "input_dir": "train/degraded",
+  "clean_dir": "train/clean",
+  "mask_dir": "train/masks",
+  "mask_encoding": "index",
+  "mask_palette": [[0, 0, 0], [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]]
+}

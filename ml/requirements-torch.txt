@@ -1,0 +1,5 @@
+# Deep model (EURS-Net). Install the CUDA build matching your GPU from https://pytorch.org
+-r requirements.txt
+torch>=2.5
+torchvision>=0.20
+onnx>=1.16
