@@ -73,12 +73,13 @@ flowchart LR
 |---|---|---|---|
 | **Classical** | Gray-world + CLAHE + bilateral; colour-threshold "segmentation" | anything | none (lower bound) |
 | **EURS-Lite** | Residual MLP on colour statistics + MLP pixel classifier on colour / context / texture features | CPU, NumPy only at inference | `eurs_lite.npz` (~24k params on synthetic) |
-| **EURS-Net** | Shared encoder, two U-Net decoders, restoration-to-segmentation (R2S) fusion, L1 + SSIM + weighted CE + Dice loss | GPU to train; ONNX on CPU/edge | `eurs_net.onnx` + `.json` |
+| **EURS-Net-Tiny** | Depthwise-separable encoder + two light decoders with R2S fusion; **0.119 M params, 3.38 GFLOPs** at 512² (fits EURS Track 2) | GPU to train; ONNX on Jetson/CPU | `eurs_net_tiny.onnx` |
+| **EURS-Net** | ResNet-18 / MobileNetV3 encoder, two U-Net decoders, R2S fusion, L1 + SSIM + weighted CE + Dice loss (19.45 M / 70.6 GFLOPs: reference model) | GPU to train; ONNX on CPU | `eurs_net.onnx` + `.json` |
 
 ## Experimental protocol (train / validation / test)
 
 1. **Index** the training archive: every degraded image is paired with its clean reference and mask by filename stem; the folder layout is auto-detected (or set with `--layout`).
-2. **Split 80 / 10 / 10 by dive.** Frames sharing a sequence prefix (e.g. `dive012_0003`) always land in the same split, so near-duplicate frames cannot leak into the test set. Groups are stratified on their rarest class (usually elasmobranch). Seed 2027, written to `data/splits/<name>/manifest.csv`.
+2. **Split 80 / 10 / 10 by scene.** EURS provides several RSUIGM-degraded versions of each real scene. Every degraded image is paired with its scene's single clean reference and mask, and all versions of a scene land in the same split, so the test set never contains a scene seen in training. When scenes are unique, frames sharing a sequence prefix (e.g. `dive012_0003`) are grouped instead. Groups are stratified on their rarest class (usually elasmobranch). Seed 2027, written to `data/splits/<name>/manifest.csv`.
 3. **Train** on `train` only. **Select** hyper-parameters / checkpoints on `val` only.
 4. **Test once** on the untouched `test` split. Report PSNR, SSIM, UCIQE, per-class IoU / F1 / precision / recall, mIoU, and **95% bootstrap CIs over test images**, plus CPU latency.
 5. The **dev archive** (`eurs_dev_degraded.zip`, no ground truth) is never used for training or selection: only for challenge submissions via `ml/predict.py`.
@@ -184,13 +185,24 @@ python ml/make_report.py --tag main --results results/eurs --split-report data/s
 
 ## Paper
 
-`paper/main.tex` is a two-column draft (*Restoration-Aware Segmentation of Underwater Imagery for the EURS Challenge*) with introduction, related work, method, protocol, results, ablations, limitations and a synthetic-verification appendix. All tables are `\input` from `paper/generated/` and all figures come from `paper/figures/`, both written by `ml/make_report.py`, so numbers in the paper always match the evaluation files.
+**"See the Reef, Then Label It: A 0.12M-Parameter Network for Joint Underwater Restoration and Segmentation"**: [`paper/main.pdf`](paper/main.pdf) (LaTeX in `paper/`).
+
+| | |
+|---|---|
+| **Target venue** | Workshop on Maritime Computer Vision (MaCVi), next edition (CVF workshop proceedings). MaCVi @ WACV 2027 closed its paper call on 16 Oct 2026. |
+| **Track / topic** | Underwater image restoration, enhancement and colour correction, with an efficient real-time vision angle aimed at EURS **Track 2 (embedded, Jetson AGX Orin)** |
+| **Format** | WACV/CVF style, ≤ 8 pages excluding references, anonymous. Port the body into the official author kit before submitting. |
+| **Core claim** | EURS-Net-Tiny does joint restoration + 5-class segmentation with **0.119 M params and 3.38 GFLOPs** at 512×512, measured in CI (limit: 1.0 M / 12 GFLOPs). R2S fusion costs about 9 k params. |
+| **Protocol** | Scene-grouped 80/10/10 split (EURS has many RSUIGM degradations per scene), validation-only selection, bootstrap CIs, open approximation of the official composite score |
+| **Citations** | 31 references, including the required RSUIGM dataset paper (Desai et al., ACM TOMM 2024) and the MaCVi 2025/2026 challenge reports |
+
+All result tables are `\input` from `paper/generated/` and figures from `paper/figures/`, both written by `ml/make_report.py`, so the paper's numbers always match the evaluation files. Red **`\todo{}`** boxes mark the only things left to fill: EURS result numbers and their interpretation, the GPU and Jetson timings, and the paper ID. Set `\draftfalse` to make LaTeX fail on any TODO left behind.
 
 ```bash
 cd paper && pdflatex main && bibtex main && pdflatex main && pdflatex main
 ```
 
-Remaining author work is marked with red **`\todo{}`** boxes: author list, result interpretation, GPU details and the official challenge metric. Set `\draftfalse` to make LaTeX fail on any TODO left behind. Before submission, port the body into the official WACV / MaCVi template. `make_report.py` refuses to put synthetic results into the main tables.
+**Embedded-track model:** train it with `python ml/train_net.py ... --encoder tiny` and check the budget with `python ml/check_budget.py --encoder tiny --size 512`. Exported ONNX graphs use the Track 2 tensor names (`image` → `restored_image`, `seg_logits`).
 
 ## API
 
@@ -222,7 +234,7 @@ Remaining author work is marked with red **`\todo{}`** boxes: author list, resul
 
 ```bibtex
 @misc{eurs_ai_studio_2026,
-  title  = {Restoration-Aware Segmentation of Underwater Imagery for the EURS Challenge},
+  title  = {See the Reef, Then Label It: A 0.12M-Parameter Network for Joint Underwater Restoration and Segmentation},
   author = {EURS AI Studio contributors},
   year   = {2026},
   howpublished = {\url{https://github.com/nvaltryek-001/EURS-ai-studio}}

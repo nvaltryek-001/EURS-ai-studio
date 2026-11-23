@@ -136,11 +136,11 @@ def table_ablation():
     abl = []
     if args.ablation and args.ablation.exists():
         abl = [json.loads(p.read_text()) for p in sorted(args.ablation.glob("*/metrics.json"))]
-    full = next((r for r in runs if r["name"] == "eurs_net"), None)
+    full = next((r for r in runs if r["name"] == "eurs_net_tiny"), None)
     lines = [r"\begin{tabular}{lccc}", r"\toprule", r"Variant & PSNR$\uparrow$ & SSIM$\uparrow$ & mIoU (\%)$\uparrow$ \\", r"\midrule"]
-    rows = ([("Full EURS-Net (ResNet-18, R2S fusion)", full)] if full else [("Full EURS-Net (ResNet-18, R2S fusion)", None)])
+    rows = [("EURS-Net-Tiny, full (R2S fusion, joint loss)", full)]
     rows += [(r.get("display_name", r["name"]).replace("_", r"\_"), r) for r in abl] or [
-        ("w/o R2S fusion", None), ("MobileNetV3-L encoder", None), ("Segmentation only ($\\lambda_r{=}0$)", None),
+        ("w/o R2S fusion", None), ("Segmentation only ($\\lambda_r{=}0$)", None),
         ("Restoration only ($\\lambda_s{=}0$)", None)]
     for name, r in rows:
         rs, sg = (r or {}).get("restoration") or {}, (r or {}).get("segmentation") or {}

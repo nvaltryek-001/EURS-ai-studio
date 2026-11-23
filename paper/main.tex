@@ -1,7 +1,10 @@
-% EURS AI Studio -- paper draft.
-% Build:  cd paper && latexmk -pdf main.tex   (or: pdflatex main; bibtex main; pdflatex main; pdflatex main)
-% Tables in generated/ and figures in figures/ are written by ml/make_report.py. Do not edit them by hand.
-% Before submission: switch to the official WACV/MaCVi template, fill author info, resolve every \todo{}.
+% EURS AI Studio -- manuscript draft.
+% Target venue: Workshop on Maritime Computer Vision (MaCVi), next edition, CVF workshop proceedings.
+% Topic track: "Underwater image restoration, enhancement, and color correction" with an
+% "Efficient and real-time vision" angle (EURS Track 2, embedded). Format: WACV/CVF, <= 8 pages
+% excluding references, anonymous. Before submission, move this body into the official WACV/CVPR
+% author kit, keep the anonymous author block, and resolve every \todo{}.
+% Build: pdflatex main; bibtex main; pdflatex main; pdflatex main
 \documentclass[10pt,twocolumn,letterpaper]{article}
 \usepackage[margin=0.75in,columnsep=0.3125in]{geometry}
 \usepackage{times}
@@ -17,7 +20,6 @@
 \usepackage[colorlinks=true,citecolor=blue!60!black,linkcolor=blue!60!black,urlcolor=blue!60!black]{hyperref}
 \usepackage[capitalise,noabbrev]{cleveref}
 
-% Draft markers. Set \drafttrue -> \draftfalse to check nothing is left (all \todo will error).
 \newif\ifdraft \drafttrue
 \ifdraft
   \newcommand{\todo}[1]{{\color{red!75!black}\textbf{[TODO: #1]}}}
@@ -25,208 +27,268 @@
   \newcommand{\todo}[1]{\errmessage{Unresolved TODO: #1}}
 \fi
 \newcommand{\ours}{EURS-Net}
+\newcommand{\tinynet}{EURS-Net-Tiny}
 \newcommand{\lite}{EURS-Lite}
 
-\title{\Large\bf Restoration-Aware Segmentation of Underwater Imagery\\for the EURS Challenge}
-\author{\todo{Author One}\textsuperscript{1} \quad \todo{Author Two}\textsuperscript{1}\\
-\textsuperscript{1}\todo{Affiliation}\\
-{\small\tt\todo{email}}}
+\title{\Large\bf See the Reef, Then Label It: A 0.12M-Parameter Network for\\Joint Underwater Restoration and Segmentation}
+\author{Anonymous MaCVi submission\\{\small Paper ID \todo{\#}}}
 \date{}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Water absorbs red light first and scatters a blue-green veil over every scene, so the two things a marine
-survey needs from a camera, faithful colour and reliable scene parsing, degrade together. We study underwater
-image restoration and five-class semantic segmentation (background, coral, fish, elasmobranch, other)
-jointly on the EURS benchmark. We propose \ours{}, a single network with a shared encoder and two decoders, in
-which features of the restoration decoder are fused into the segmentation decoder at every scale
-(restoration-to-segmentation, R2S, fusion). We also release \lite{}, a CPU-only baseline built from two
-small per-pixel networks that trains in minutes, and an open protocol for both tasks: a split of the official
-training data grouped by dive so that near-duplicate frames cannot leak across splits, model selection on
-validation data only, and a single scored pass on a held-out test split with bootstrap confidence intervals.
-On the held-out EURS test split, \ours{} reaches \todo{X.XX}\,dB PSNR and \todo{XX.X}\% mIoU, compared with
-\todo{X.XX}\,dB and \todo{XX.X}\% for a classical colour-correction and threshold baseline.
-Code, trained models and an interactive demo are available at
-\url{https://github.com/nvaltryek-001/EURS-ai-studio}.
+Underwater cameras rarely get a second chance at a scene. By the time an image reaches a reef survey,
+water has already stripped out most of the red light and laid a blue-green haze over everything, and the
+vehicle that captured it usually carries a small embedded computer with a tight power budget. The EURS
+challenge asks for two outputs under these conditions, a restored image and a five-class label map
+(background, coral, fish, elasmobranch, other), and gives the most weight to a Jetson-class track capped
+at one million parameters and 12\,GFLOPs. We present \tinynet{}, a single network that does both jobs with
+0.119\,M parameters and 3.4\,GFLOPs at $512{\times}512$. A depthwise-separable encoder feeds two light
+decoders, and the restoration decoder hands its features to the segmentation decoder at every scale; we
+call this restoration-to-segmentation (R2S) fusion. Because EURS contains many synthetic degradations of
+each real scene, we also argue that train, validation and test data must be split by scene, and we
+release a protocol that does this, together with an open approximation of the official composite score,
+bootstrap confidence intervals and a CPU-only baseline. On our held-out scenes, \tinynet{} reaches
+\todo{XX.X}\% mIoU and \todo{XX.X}\,dB PSNR, against \todo{XX.X}\% and \todo{XX.X}\,dB for a classical
+colour-correction baseline. Code, weights and an interactive demo are public.
 \end{abstract}
 
 % =====================================================================================
 \section{Introduction}
-Cameras on divers, remotely operated vehicles and autonomous underwater vehicles are now a routine instrument
-for reef monitoring, fisheries assessment and the study of protected species such as sharks and rays.
-Two properties of water make their images hard to use. Wavelength-dependent attenuation removes red, then green,
-light with distance, and back-scattered ambient light adds a range-dependent veil~\cite{jaffe1990computer,
-mcglamery1980computer,akkaynak2018revised}. The result is low contrast and a strong blue-green cast that both
-misleads human annotators and shifts the input distribution of recognition models trained in air.
+Anyone who has looked through raw footage from a reef survey knows the problem. Ten metres down, an orange
+coral head looks brown; twenty metres away, a reef shark is a grey smudge in green fog. Water absorbs long
+wavelengths first and scatters ambient light back towards the camera, so contrast and colour fall away
+with distance in a way that depends on the water itself~\cite{jaffe1990computer,mcglamery1980computer,akkaynak2018revised}.
+People learn to read such images. Segmentation networks trained on clearer data mostly do not.
 
-Restoration and recognition have mostly been studied apart: enhancement methods are judged by image-quality
-metrics~\cite{li2020uieb,islam2020funie,liu2020ruie}, and segmentation benchmarks such as SUIM~\cite{islam2020suim}
-evaluate parsing on unrestored inputs. The EURS challenge~\cite{eurs2027challenge}, part of the MaCVi
-workshop series~\cite{kiefer2025macvi}, couples the two: participants restore degraded underwater images and
-segment them into five marine classes. This raises a practical question that we study directly: \emph{should a
-segmenter see the restored image, the degraded image, or a shared representation of both?}
+Two lines of work have grown up around this. One restores the image, either by inverting a physical model of
+image formation~\cite{akkaynak2019seathru,he2011dark} or by learning the mapping from paired
+data~\cite{li2020uieb,islam2020funie,desai2022aquagan,desai2023depthcue}. The other parses the scene, usually
+working on images as they come~\cite{islam2020suim}. The EURS challenge~\cite{eurs2027challenge}, run within
+the Maritime Computer Vision (MaCVi) workshop series~\cite{kiefer2025macvi,kiefer2026macvi}, joins the two.
+Its data are real scenes with clean references and masks, each degraded many times by the RSUIGM
+generator~\cite{desai2024rsuigm} to mimic different water types and depths. Segmentation carries the largest
+share of its score, and its embedded track, which counts most towards the final ranking, runs the submitted
+ONNX graph on a Jetson AGX Orin under a hard budget of 1.0\,M parameters and 12\,GFLOPs~\cite{eurs2027challenge}.
+
+That budget rules out the obvious design of chaining an off-the-shelf restoration network with an
+off-the-shelf segmenter. A ResNet-18 U-Net with two decoders already needs 19.5\,M parameters and
+71\,GFLOPs at $512^2$ (\cref{tab:budget}). We therefore ask a narrower question: \emph{if both tasks have to
+share about a hundred thousand weights, how should they share them?} Our answer is to run the two decoders
+side by side and pass restoration features into the segmentation decoder at every scale. The segmenter
+then sees colour-corrected evidence without a second forward pass, and the segmentation loss nudges the
+restoration features towards what matters for labelling.
 
 \paragraph{Contributions.}
 \begin{itemize}\setlength\itemsep{1pt}
-  \item \textbf{\ours{}}, a dual-decoder network whose segmentation decoder receives restoration features at
-        every scale (R2S fusion), trained with a multi-task objective that tolerates samples lacking either label.
-  \item \textbf{\lite{}}, a training-light baseline (two small per-pixel MLPs on colour-statistics and texture
-        features) that runs in NumPy on a CPU, giving a reproducible lower bound and a fallback for embedded use.
-  \item \textbf{A leakage-aware protocol} for EURS: a dive-grouped, rare-class-stratified 80/10/10 split of the
-        official training archive; validation-only model selection; and test-split reporting with per-class IoU
-        and bootstrap confidence intervals. The split files and evaluation code are released.
-  \item An open-source web studio and API that serves the trained models for interactive inspection.
+  \item \textbf{\tinynet{}}, a joint restoration and segmentation network with R2S fusion. It uses
+        0.119\,M parameters and 3.38\,GFLOPs at $512^2$, about 12\% of the parameter budget and 28\% of
+        the compute budget of the EURS embedded track, and exports as one static ONNX graph with the
+        challenge's tensor names.
+  \item \textbf{A scene-grouped protocol for EURS.} Every scene appears many times under different synthetic
+        water, so we split train, validation and test by scene, stratify on the rarest class, select models
+        on validation data only, and report test results with image-level bootstrap intervals and an open
+        approximation of the official composite score.
+  \item \textbf{\lite{}}, a reference baseline of two small per-pixel MLPs that trains on a laptop CPU in
+        minutes, and an open web studio that serves every model for inspection.
 \end{itemize}
 
 % =====================================================================================
 \section{Related Work}
-\paragraph{Underwater image formation and restoration.}
-Physics-based models describe an observed channel $I_c$ as the scene radiance $J_c$ attenuated by transmission
-$t_c$ plus back-scatter $B_c$~\cite{jaffe1990computer,mcglamery1980computer}; Akkaynak and
-Treibitz~\cite{akkaynak2018revised} showed that the attenuation coefficients governing direct and back-scattered
-light differ, and Sea-thru~\cite{akkaynak2019seathru} inverts the revised model given range. Prior-based methods
-adapt the dark channel prior from dehazing~\cite{he2011dark}, while classical colour constancy (gray-world
-\cite{buchsbaum1980spatial}) and local contrast enhancement (CLAHE~\cite{zuiderveld1994clahe}) remain common,
-training-free baselines. Learned enhancement became practical with paired benchmarks such as UIEB~\cite{li2020uieb}
-and fast networks such as FUnIE-GAN~\cite{islam2020funie}. Because clean references are rarely available,
-no-reference measures such as UCIQE~\cite{yang2015uciqe} and UIQM~\cite{panetta2016uiqm} are widely reported.
+\paragraph{Underwater image formation.}
+The classical model writes each colour channel of a pixel as attenuated scene radiance plus back-scatter,
+$I_c=J_c\,t_c+B_c(1-t_c)$ with $t_c=e^{-\beta_c z}$~\cite{jaffe1990computer,mcglamery1980computer}. Akkaynak
+and Treibitz showed that the coefficients for the direct and back-scattered signals differ and depend on
+range and reflectance~\cite{akkaynak2018revised}, and Sea-thru inverts the revised model when range is
+known~\cite{akkaynak2019seathru}. The same model drives most synthetic data: RUIG and RSUIGM produce realistic
+degradations across Jerlov water types~\cite{desai2021ruig,desai2024rsuigm}, and recent work adds forward
+scattering and non-uniform media~\cite{ismiroglou2025seaing}. EURS uses RSUIGM, so its degradations are
+physically motivated while its scene content repeats across many images. This shapes our evaluation
+protocol.
 
-\paragraph{Underwater semantic segmentation.}
-SUIM~\cite{islam2020suim} introduced a pixel-level benchmark for underwater scenes and showed that standard
-encoder--decoder architectures such as U-Net~\cite{ronneberger2015unet} transfer reasonably but suffer on thin
-and rare classes. Rare classes are a recurring difficulty: elasmobranchs occupy a small fraction of pixels and
-of images, which motivates class-balanced losses~\cite{milletari2016vnet} and stratified evaluation.
+\paragraph{Restoration and enhancement.}
+Training-free methods remain hard to beat on cost: gray-world colour constancy~\cite{buchsbaum1980spatial},
+CLAHE~\cite{zuiderveld1994clahe} and the dark channel prior~\cite{he2011dark} need no data at all. Learned methods
+took off with paired benchmarks such as UIEB~\cite{li2020uieb} and RUIE~\cite{liu2020ruie}, real-time models
+such as FUnIE-GAN~\cite{islam2020funie}, and depth-aware restoration such as DepthCue~\cite{desai2023depthcue}.
+Reference-free measures, namely UCIQE~\cite{yang2015uciqe}, UIQM~\cite{panetta2016uiqm} and CCF~\cite{wang2018ccf},
+help when clean references are missing, but they can be gamed, and EURS gives them only 10\% of its
+score~\cite{eurs2027challenge}.
 
-\paragraph{Joint restoration and recognition.}
-Multi-task learning shares representations across tasks and can be sensitive to loss weighting
-\cite{kendall2018multitask}. In the MaCVi 2025 underwater restoration challenge, the winning entry reported that its two-stage
-restoration pipeline improved downstream detection of marine species~\cite{kiefer2025macvi}. Our R2S fusion takes the
-next step of letting segmentation consume restoration features inside one network, rather than chaining two
-separately trained models.
+\paragraph{Underwater segmentation and joint models.}
+SUIM~\cite{islam2020suim} established pixel-level underwater parsing and showed that U-Net-style
+encoder--decoders~\cite{ronneberger2015unet} transfer reasonably well but struggle with small and rare classes.
+Multi-task networks with a shared encoder suit joint objectives, though they are sensitive to how the losses
+are weighted~\cite{kendall2018multitask}. In the MaCVi 2025 restoration challenge, the winning team reported
+that its restoration pipeline also improved downstream detection of marine species~\cite{kiefer2025macvi}. We
+move that observation inside one network: restoration is not a pre-processing stage but a source of features
+for the segmenter.
+
+\paragraph{Efficient networks.}
+Depthwise-separable convolutions~\cite{howard2017mobilenets,howard2019mobilenetv3} cut the cost of a
+$3{\times}3$ convolution by close to an order of magnitude, which is what makes two decoders affordable under
+the EURS budget.
 
 % =====================================================================================
 \section{Method}
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/architecture.pdf}
+\caption{\tinynet{}. A shared depthwise-separable encoder feeds a restoration decoder and a segmentation
+decoder. At each of the four decoder scales, restoration features are concatenated into the segmentation
+decoder (dashed: R2S fusion). The restoration head predicts a bounded residual added to the input.}
+\label{fig:arch}
+\end{figure}
+
 \subsection{Problem setting}
-Given a degraded RGB image $x\in[0,1]^{H\times W\times 3}$, we predict a restored image $\hat y$ and a label map
-$\hat m\in\{0,\dots,4\}^{H\times W}$ for the classes background, coral, fish, elasmobranch and other. Training
-samples may provide a clean reference $y$, a mask $m$, or both; the losses below are masked accordingly.
+Given a degraded image $x\in[0,1]^{H\times W\times 3}$, we predict a restored image $\hat y$ and logits
+$\hat z\in\mathbb{R}^{5\times H\times W}$ whose arg-max gives the label map. Every EURS training sample has a
+clean reference $y$ and a mask $m$; the losses also accept samples carrying only one of them, which keeps the
+code usable on other datasets.
 
-\subsection{\lite{}: a CPU baseline}
-\lite{} is two-stage. \emph{Restoration:} for each pixel we compute a 23-dimensional descriptor of colour and
-local statistics (RGB; Gaussian means and standard deviations at $\sigma\in\{6,24\}$; image-level channel means
-and standard deviations; a $15{\times}15$ dark channel~\cite{he2011dark}; and normalised row position, a proxy
-for range in typical down-looking and horizontal views). An MLP regresses the \emph{residual} $y-x$, which is
-low-frequency; we predict it at a working resolution of at most 384\,px, upsample it, and add it to the
-full-resolution input so fine detail is preserved. \emph{Segmentation:} a second MLP classifies each pixel of the
-restored image from colour (RGB, Lab, HSV with circular hue), multi-scale context (Lab means and luminance
-standard deviation at $\sigma\in\{2,6,16\}$), texture (gradient magnitude and Laplacian at two scales) and row
-position. Class probabilities are spatially smoothed before the arg-max. Both MLPs are trained on class-balanced
-pixel samples from the training split; hidden sizes and the smoothing scale are chosen on the validation split.
-Weights are exported to a plain array file, and inference needs only NumPy and OpenCV.
+\subsection{Architecture}
+\paragraph{Encoder.} A $3{\times}3$ convolution is followed by five stages of depthwise-separable blocks
+(depthwise $3{\times}3$, batch normalisation, ReLU, pointwise $1{\times}1$, batch normalisation, ReLU), each
+halving the resolution, with widths $16,24,40,64,96$. This yields features $F_1,\dots,F_5$ at strides 2 to 32.
+Input normalisation is folded into the graph so that the deployed model takes plain $[0,1]$ RGB, as the
+challenge requires.
 
-\subsection{\ours{}: dual decoders with R2S fusion}
-\paragraph{Architecture.} A shared encoder (ResNet-18~\cite{he2016resnet} or MobileNetV3-Large~\cite{howard2019mobilenetv3},
-ImageNet-initialised, with input normalisation folded into the graph) produces features $F_1,\dots,F_5$ at strides
-2 to 32. Two U-Net-style decoders~\cite{ronneberger2015unet} upsample with skip connections. Let $R_k$ be the
-restoration decoder's output at scale $k$. The segmentation decoder block at the same scale receives
+\paragraph{Two decoders.} Both decoders follow the U-Net pattern~\cite{ronneberger2015unet} with widths
+$64,48,32,16$. Each block up-samples bilinearly, concatenates the encoder skip and applies two
+depthwise-separable blocks. Let $R_k$ be the restoration decoder's output at scale $k$. The segmentation block
+at the same scale computes
 \begin{equation}
-S_k = \phi_k\big([\,\mathrm{up}(S_{k-1}),\; F_{5-k},\; R_k\,]\big),
+S_k=\phi_k\big([\,\mathrm{up}(S_{k-1}),\,F_{5-k},\,R_k\,]\big),
+\label{eq:fusion}
 \end{equation}
-where $[\cdot]$ is channel concatenation and $\phi_k$ two conv--BN--ReLU layers. The restoration head predicts a
-bounded residual, $\hat y=\mathrm{clip}\big(x+\tanh(h_r([\,\mathrm{up}(R_4),x\,])),0,1\big)$, and the segmentation head
-predicts logits $\hat z=h_s(S_4)$ upsampled to full resolution. Because $R_k$ is used by the segmentation branch,
-the segmentation loss also shapes the restoration features.
+where $[\cdot]$ is channel concatenation. That is all R2S fusion is. It costs about 9\,k parameters and
+0.13\,GFLOPs (\cref{tab:budget}), and it lets gradients from the segmentation loss reach the restoration
+features.
 
-\paragraph{Objective.} With $\mathbb{1}_y,\mathbb{1}_m$ indicating label availability,
+\paragraph{Heads.} Restoration is predicted as a bounded residual,
+$\hat y=\mathrm{clip}\big(x+\tanh(h_r([\mathrm{up}(R_4),x])),0,1\big)$, so the network only has to learn the
+correction. The segmentation head maps $S_4$ to five logits, which are up-sampled to full resolution.
+
+\subsection{Objective}
+With indicators $\mathbb{1}_y,\mathbb{1}_m$ for label availability,
 \begin{align}
-\mathcal{L} &= \lambda_r\,\mathbb{1}_y\big(\lVert\hat y-y\rVert_1 + \alpha\,(1-\mathrm{SSIM}(\hat y,y))\big) \nonumber\\
-&\;+ \lambda_s\,\mathbb{1}_m\big(\mathrm{CE}_w(\hat z,m) + \beta\,\mathcal{L}_{\mathrm{Dice}}(\hat z,m)\big),
+\mathcal{L}&=\lambda_r\,\mathbb{1}_y\big(\lVert\hat y-y\rVert_1+\alpha\,(1-\mathrm{SSIM}(\hat y,y))\big)\nonumber\\
+&\quad+\lambda_s\,\mathbb{1}_m\big(\mathrm{CE}_w(\hat z,m)+\beta\,\mathcal{L}_{\mathrm{Dice}}(\hat z,m)\big).
+\label{eq:loss}
 \end{align}
-where $\mathrm{CE}_w$ is cross-entropy with class weights $w_c\propto f_c^{-1/2}$ ($f_c$ the training pixel frequency,
-normalised to mean one and capped at $10\times$ the smallest), $\mathcal{L}_{\mathrm{Dice}}$ the soft Dice
-loss~\cite{milletari2016vnet} over classes present in the batch, and pixels labelled \emph{ignore} are excluded. We
-use $\lambda_r=\lambda_s=1$, $\alpha=0.2$, $\beta=0.5$.
+The cross-entropy uses class weights $w_c\propto f_c^{-1/2}$ computed from training pixel frequencies,
+normalised to a mean of one and capped at ten times the smallest weight. The soft Dice
+term~\cite{milletari2016vnet} is averaged over the classes present in a batch. Both terms protect the rare
+elasmobranch class, which the official score punishes heavily if it is ignored. We set $\lambda_r=\lambda_s=1$,
+$\alpha=0.2$ and $\beta=0.5$.
+
+\subsection{\lite{}: a CPU reference}
+So that anyone can reproduce the protocol without a GPU, \lite{} uses two small MLPs. The first regresses the
+residual $y-x$ from 23 per-pixel colour statistics (local means and deviations at two scales, image-level
+channel statistics, a dark channel~\cite{he2011dark} and row position) at a working resolution of at most
+384\,px, and the up-sampled residual is added to the full-resolution input. The second classifies each pixel of
+the restored image from colour, multi-scale context and texture features, and the class probabilities are
+smoothed before the arg-max. Hidden sizes and the smoothing scale are chosen on validation data. Inference
+needs only NumPy and OpenCV.
 
 % =====================================================================================
-\section{Experimental Protocol}
-\subsection{Data and splits}
-We use the official EURS training archive~\cite{eurs2027challenge}. The development archive contains degraded images
-only; it is never used for training or model selection and serves only to produce challenge submissions.
-Because consecutive frames from one dive are near duplicates, a random image-level split would place almost identical
-images in training and test sets and inflate scores. We therefore group images by sequence identifier (the filename
-prefix before the frame number) and split \emph{groups} 80/10/10 into train, validation and test, stratifying on the
-rarest class each group contains. \Cref{tab:split} summarises the result. \todo{State how sequence ids are encoded in
-the EURS filenames, and confirm the grouping heuristic matches it.}
+\section{Evaluation Protocol}
+\subsection{Scene-grouped splits}
+Each EURS scene is degraded many times~\cite{desai2024rsuigm,eurs2027challenge}. Split the training archive by
+image, and the test set contains the same reef, the same fish and the same mask as the training set, just
+under different water, so scores would mostly measure memorisation. We instead pair every degraded image
+with its scene's single reference and mask, then split \emph{scenes} 80/10/10 into train, validation and test
+(seed 2027). Scenes are stratified by the rarest class they contain, so that elasmobranchs appear in every
+split. \Cref{tab:split} gives the counts. The organisers' development and test images have no public ground
+truth and are used only for leaderboard submissions.
 
 \begin{table}[t]
 \centering\small
-\input{generated/main_table_split.tex}
-\caption{Dive-grouped split of the EURS training archive (seed 2027).}
+\resizebox{\linewidth}{!}{\input{generated/main_table_split.tex}}
+\caption{Scene-grouped split of the EURS training archive.}
 \label{tab:split}
 \end{table}
 
 \subsection{Metrics}
-\emph{Restoration:} PSNR and SSIM~\cite{wang2004ssim} against the clean reference (8-bit RGB, data range 255),
-and the no-reference UCIQE~\cite{yang2015uciqe}. \emph{Segmentation:} a confusion matrix accumulated over all test
-pixels, from which we report per-class IoU, mean IoU over classes present in the ground truth, mean F1, precision and
-recall. \emph{Uncertainty:} 95\% confidence intervals from 1{,}000 bootstrap resamples of test
-\emph{images}~\cite{efron1993bootstrap}, recomputing dataset-level mIoU for each resample. \emph{Cost:} median
-end-to-end CPU latency per image, including pre- and post-processing. \todo{Add the official EURS challenge metric if it
-differs, and report the leaderboard score of the dev-set submission.}
+We report PSNR and SSIM~\cite{wang2004ssim} against the clean reference, UCIQE~\cite{yang2015uciqe}, and per-class
+IoU, F1, precision and recall from one confusion matrix accumulated over all test pixels. Confidence intervals
+come from 1{,}000 bootstrap resamples of test \emph{images}, with the dataset-level mIoU recomputed for each
+resample~\cite{efron1993bootstrap}.
 
-\subsection{Baselines and implementation}
-\emph{Classical:} gray-world white balance~\cite{buchsbaum1980spatial}, CLAHE on Lab
-luminance~\cite{zuiderveld1994clahe} and a bilateral filter, followed by a colour-threshold segmentation heuristic.
-\emph{Identity:} the degraded input scored against the reference. \lite{} uses scikit-learn MLPs (Adam, early
-stopping on held-out training pixels). \ours{} is trained with AdamW~\cite{loshchilov2019adamw} (learning rate
-$3\times10^{-4}$, weight decay $10^{-4}$, linear warm-up then cosine decay), batch size 8, random scaled crops of
-$384^2$ with horizontal flips, mixed precision, for up to 60 epochs with early stopping (patience 15) on the
-validation score $\mathrm{mIoU}+\mathrm{PSNR}/40$. Inference resizes to $512^2$ and re-injects full-resolution detail by
-upsampling the predicted correction. \todo{GPU model and wall-clock training time.}
+The official score is
+$F=0.6\,Q_\mathrm{seg}+0.3\,(0.45\,\mathrm{PSNR}_\mathrm{norm}+0.45\,\mathrm{SSIM}+0.10\,\rho_\mathrm{sharp})+0.1\,\mathrm{NR}$,
+where $Q_\mathrm{seg}$ is F1 times mIoU times a coverage penalty, $\mathrm{PSNR}_\mathrm{norm}$ maps 15--35\,dB onto
+$[0,1]$, and NR averages normalised UIQM, UCIQE and CCF~\cite{eurs2027challenge}. Not every detail of the official
+evaluator is public, so we report an approximation, EURS$^{\approx}$. It sets the coverage term to zero when any
+ground-truth class has recall below 1\%, measures sharpness as a ratio of Laplacian variances capped at one, and
+uses UCIQE$/0.7$ in place of NR. We use EURS$^{\approx}$ only to compare our own variants; the organisers' evaluator
+remains the reference.
+
+\subsection{Baselines and training details}
+\emph{Identity} scores the degraded input itself. \emph{Classical} applies gray-world white
+balance~\cite{buchsbaum1980spatial}, CLAHE~\cite{zuiderveld1994clahe} and a bilateral filter, then colour
+thresholds for the label map. \ours{} with a ResNet-18 encoder~\cite{he2016resnet} serves as an unconstrained
+upper reference. All networks are trained with AdamW~\cite{loshchilov2019adamw} (learning rate
+$3{\times}10^{-4}$, weight decay $10^{-4}$, warm-up then cosine decay), batch size 8 and random scaled $384^2$
+crops with horizontal flips, for up to 60 epochs with early stopping (patience 15) on the validation score
+$\mathrm{mIoU}+\mathrm{PSNR}/40$. \tinynet{} is trained from scratch, while the ResNet-18 model starts from ImageNet
+weights. Models are exported at $512^2$ with a static input shape. \todo{GPU type, training time, and Jetson AGX
+Orin latency and energy from the organisers' report.}
 
 % =====================================================================================
 \section{Results}
+\begin{table}[t]
+\centering\small
+\input{generated/budget_table.tex}
+\caption{Model size and compute at $1{\times}3{\times}512{\times}512$, measured with our counter (FLOPs $=2\times$
+multiply--accumulates of convolution and linear layers). EURS Track 2 allows $\le$1.0\,M parameters and
+$\le$12\,GFLOPs; run the official checker before submitting.}
+\label{tab:budget}
+\end{table}
+
 \begin{table*}[t]
 \centering\small
 \input{generated/main_table_main.tex}
-\caption{Held-out EURS test split. Brackets: 95\% bootstrap confidence intervals over test images. Latency is the
-median per image on CPU for the full pipeline.}
+\caption{Held-out test scenes of the EURS training archive. Brackets: 95\% bootstrap intervals over test images.
+EURS$^{\approx}$: our approximation of the official composite score. Latency: median per image on CPU, end to end.}
 \label{tab:main}
 \end{table*}
 
 \begin{table*}[t]
 \centering\small
 \input{generated/main_table_per_class.tex}
-\caption{Per-class IoU (\%) on the held-out EURS test split.}
+\caption{Per-class IoU (\%) on the held-out test scenes.}
 \label{tab:perclass}
 \end{table*}
 
-\Cref{tab:main} compares all methods on the held-out test split and \cref{tab:perclass} breaks segmentation down by
-class. \todo{Describe the main findings once the numbers exist: the restoration gain over the identity and classical
-baselines, the mIoU gap between \lite{} and \ours{}, and whether the confidence intervals overlap.}
-\todo{Discuss the elasmobranch class specifically: its pixel share in \cref{tab:split}, its IoU, and the dominant
-confusions in \cref{fig:confusion}.}
+\paragraph{Budget.} \Cref{tab:budget} puts the constraint in perspective. Both large encoders exceed the embedded
+limits several times over, while \tinynet{} uses 12\% of the parameter budget and 28\% of the compute budget. The
+headroom is deliberate: it leaves space to widen the decoders if validation results justify it.
+
+\paragraph{Accuracy.} \todo{Describe \cref{tab:main} once the EURS runs finish: the restoration gain of each model
+over the identity and classical baselines, the gap between \tinynet{} and the ResNet-18 reference, and whether the
+bootstrap intervals overlap.} \todo{Discuss \cref{tab:perclass}, in particular the elasmobranch class: its pixel
+share in \cref{tab:split}, its IoU and the main confusions in \cref{fig:confusion}.}
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth]{figures/main_per_class_iou.pdf}
-\caption{Per-class IoU on the EURS test split.}
+\caption{Per-class IoU on the held-out test scenes.}
 \label{fig:perclass}
 \end{figure}
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.85\linewidth]{figures/main_confusion.pdf}
-\caption{Row-normalised confusion matrix of the best model on the EURS test split.}
+\caption{Row-normalised confusion matrix of the best model.}
 \label{fig:confusion}
 \end{figure}
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\linewidth]{figures/main_qualitative.pdf}
-\caption{Qualitative results on EURS test images.}
+\caption{Test scenes: degraded input, restoration, reference, predicted labels and ground truth.}
 \label{fig:qual}
 \end{figure*}
 
@@ -234,32 +296,30 @@ confusions in \cref{fig:confusion}.}
 \begin{table}[t]
 \centering\small
 \resizebox{\linewidth}{!}{\input{generated/main_table_ablation.tex}}
-\caption{Ablations of \ours{} on the EURS test split.}
+\caption{Ablations on the held-out test scenes.}
 \label{tab:ablation}
 \end{table}
-\Cref{tab:ablation} isolates the design choices: removing R2S fusion, replacing the encoder with MobileNetV3-Large
-for embedded deployment, and training each task alone. \todo{Interpret: does fusion help segmentation, does the
-joint loss help or hurt restoration, and what is the accuracy cost of the MobileNet encoder?}
-
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\linewidth]{figures/main_training_curves.pdf}
-\caption{Training dynamics. Left: training (solid) and validation (dashed) loss. Right: validation score per epoch.}
-\label{fig:curves}
-\end{figure*}
+\Cref{tab:ablation} isolates the design choices: removing R2S fusion, which saves 9\,k parameters, and training
+each task alone ($\lambda_r=0$ or $\lambda_s=0$ in \cref{eq:loss}). \todo{Interpret: does fusion help segmentation
+at this scale, and does the joint loss help or hurt restoration?}
 
 % =====================================================================================
 \section{Limitations}
-PSNR and SSIM require clean references whose own fidelity is unknown for real underwater scenes, so we also report a
-no-reference score; neither fully captures perceived quality or scientific usefulness. Our split is internal to the
-official training archive and may be easier than the challenge's hidden test data if the latter comes from different
-sites or cameras. The sequence-grouping heuristic depends on filename conventions. \lite{} classifies pixels
-independently apart from probability smoothing, which limits it on thin and small objects.
+Our split comes from the official training archive. It removes scene-level leakage, but it cannot tell us how
+well a model transfers to the organisers' hidden scenes or to water outside the RSUIGM generator. PSNR and SSIM
+inherit any imperfections in the clean references, and reference-free scores tend to reward over-saturated
+output, which is why we treat them as secondary. EURS$^{\approx}$ follows the published formula, but parts of it
+are approximations, so it should not be read as a leaderboard number. Finally, the FLOP count is our own;
+operator fusion and numeric precision on the Jetson will change real latency, and the organisers' measurements
+are the ones that count.
 
 \section{Conclusion}
-We presented a joint restoration and segmentation model for underwater imagery, a CPU baseline, and a leakage-aware
-evaluation protocol for EURS. \todo{One-sentence summary of the headline result.} All code, split files, trained
-weights and the interactive studio are public.
+A segmenter does not need a separate restoration model in front of it to benefit from restoration. In
+\tinynet{}, the restoration decoder costs a few tens of thousands of parameters and hands its features straight
+to the segmenter, and the whole model fits comfortably inside the EURS embedded budget. How the model is
+measured matters as much as how it is built: on data made of many degradations of the same scenes, only a
+scene-grouped split gives an honest estimate. \todo{One sentence with the headline result.} Code, split files,
+trained weights and the interactive studio are released with the paper.
 
 {\small
 \bibliographystyle{unsrtnat}
@@ -269,37 +329,29 @@ weights and the interactive studio are public.
 % =====================================================================================
 \clearpage
 \appendix
-\section{Pipeline Verification on Synthetic Data}
+\section{Pipeline Check on Procedural Scenes}
 \label{app:synthetic}
-\emph{The numbers in this appendix are not EURS results.} To check the full pipeline (indexing, splitting, training,
-evaluation and reporting) independently of the official data, we render 300 procedural reef scenes with
-pixel-exact five-class masks and degrade them with the image formation model
-$I_c = J_c\,t_c + B_c(1-t_c)$, $t_c=e^{-\beta_c z}$~\cite{akkaynak2018revised}, with randomly drawn
-attenuation coefficients ($\beta_R>\beta_G\gtrsim\beta_B$), back-scatter colour, range maps, artificial lighting,
-forward-scatter blur and sensor noise. Frames are generated in groups of six that share a ``dive'' prefix so that the
-grouped split is exercised. \Cref{tab:syn} and \cref{fig:syn-qual} show that \lite{} learns both tasks on this data,
-whereas the classical pipeline does not. Because the degradation model is known and the scenes are simple, these
-scores are far higher than should be expected on real imagery.
+\emph{The numbers in this appendix are not EURS results.} Before touching the official data we checked the whole
+pipeline (pairing, splitting, training, evaluation and reporting) on 300 procedurally rendered reef scenes with
+exact five-class masks, degraded with $I_c=J_c t_c+B_c(1-t_c)$, $t_c=e^{-\beta_c z}$ and randomly drawn
+attenuation, back-scatter, range, lighting, blur and noise. Frames come in groups of six sharing a ``dive''
+prefix, so the grouped split is exercised. \Cref{tab:syn} and \cref{fig:syn-qual} show that \lite{} learns both
+tasks here while the classical pipeline does not. These scenes are far simpler than real reefs, so the scores
+say nothing about real-world performance.
 
 \begin{table*}[h]
 \centering\small
 \input{generated/synthetic_table_main.tex}
-\caption{Synthetic sanity check (test split of 30 images; not EURS data).}
+\caption{Procedural sanity check (30 test images; not EURS data).}
 \label{tab:syn}
 \end{table*}
 
 \begin{figure*}[h]
 \centering
 \includegraphics[width=0.9\linewidth]{figures/synthetic_qualitative.pdf}
-\caption{Synthetic test scenes: degraded input, \lite{} restoration, clean reference, predicted labels over the
-restored image, and ground truth.}
+\caption{Procedural test scenes: degraded input, \lite{} restoration, clean reference, predicted labels and ground
+truth.}
 \label{fig:syn-qual}
 \end{figure*}
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=\linewidth]{figures/synthetic_per_class_iou.pdf}
-\caption{Per-class IoU on the synthetic test split.}
-\end{figure}
 
 \end{document}

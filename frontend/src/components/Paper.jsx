@@ -3,8 +3,8 @@ import { Check, Copy, Doc, Github } from "../icons";
 
 const REPO = "https://github.com/nvaltryek-001/EURS-ai-studio";
 const BIBTEX = `@misc{eurs_ai_studio_2026,
-  title  = {Restoration-Aware Segmentation of Underwater Imagery
-            for the EURS Challenge},
+  title  = {See the Reef, Then Label It: A 0.12M-Parameter Network
+            for Joint Underwater Restoration and Segmentation},
   author = {EURS AI Studio contributors},
   year   = {2026},
   howpublished = {\\url{${REPO}}}
@@ -26,7 +26,7 @@ export default function Paper() {
           <h2>Paper</h2>
         </header>
         <article className="abstract">
-          <h3>Restoration-Aware Segmentation of Underwater Imagery for the EURS Challenge</h3>
+          <h3>See the Reef, Then Label It: A 0.12M-Parameter Network for Joint Underwater Restoration and Segmentation</h3>
           <p>Light underwater loses red first, and scatter adds a blue-green veil, so both colour restoration and scene parsing degrade together. We study the two tasks jointly on the EURS benchmark. EURS-Net shares one encoder between a restoration decoder and a five-class segmentation decoder, and feeds the restoration features into the segmentation decoder at every scale. EURS-Lite, a CPU-only baseline built from two small per-pixel networks, gives a reproducible lower bound that trains in minutes without a GPU. All models follow one leakage-aware protocol: an 80/10/10 split grouped by dive, validation-only model selection, and a single scored pass on the held-out test split with bootstrap confidence intervals.</p>
           <div className="paper-links">
             <a className="btn btn-sun" href={`${REPO}/blob/main/paper/main.pdf`}><Doc /> Read the PDF</a>

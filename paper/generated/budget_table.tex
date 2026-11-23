@@ -1,0 +1,13 @@
+% Measured by ml/check_budget.py (CI run, input 1x3x512x512; FLOPs = 2 x MACs of Conv2d/Linear layers).
+\begin{tabular}{lrrc}
+\toprule
+Variant & Params (M) & GFLOPs & Track 2 \\
+\midrule
+EURS-Net-Tiny (R2S fusion) & 0.119 & 3.38 & \checkmark \\
+EURS-Net-Tiny (no fusion) & 0.110 & 3.25 & \checkmark \\
+EURS-Net, MobileNetV3-L & 12.37 & 46.79 & $\times$ \\
+EURS-Net, ResNet-18 & 19.45 & 70.61 & $\times$ \\
+\midrule
+\emph{Track 2 limit} & \emph{1.00} & \emph{12.00} & \\
+\bottomrule
+\end{tabular}
